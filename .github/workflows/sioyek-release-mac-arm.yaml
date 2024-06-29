@@ -1,0 +1,85 @@
+name: Build and Release MAC ARM
+
+on:
+  workflow_dispatch:
+    inputs:
+      releaseType:
+        description: Type of release (MAC-ARM only)
+        required: true
+        default: 'v*'
+
+jobs:
+  build-mac-arm:
+    runs-on: macos-14
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+            submodules: 'recursive'
+
+    - name: Cache Homebrew packages
+      uses: actions/cache@v4
+      env:
+        cache-name: homebrew
+      with:
+        path: ~/Library/Caches/Homebrew
+        key: ${{ runner.os }}-arm-build-${{ env.cache-name }}-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-arm-build-${{ env.cache-name }}-
+          ${{ runner.os }}-arm-build-
+          ${{ runner.os }}-arm-
+
+    - name: Install dependencies
+      run:  brew install freeglut mesa harfbuzz 
+      
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: '6.6.1'
+        modules: 'all'
+        cache: true
+
+    - name: Build
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: |
+        chmod +x build_mac.sh
+        MAKE_PARALLEL=$(sysctl -n hw.logicalcpu) ./build_mac.sh
+        mv sioyek-release-mac.zip sioyek-release-mac-arm.zip
+        
+    - name: upload mac artifact
+      uses: actions/upload-artifact@v1
+      with:
+        name: uploads
+        path: sioyek-release-mac-arm.zip
+
+  upload-release:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-20.04
+    needs: [build-mac-arm]
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: create release
+      id: create_release
+      uses: actions/create-release@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN  }}
+      with:
+        tag_name: ${{ github.event.inputs.releaseType }}
+        release_name: Release ${{ github.event.inputs.releaseType }}
+        draft: false
+        prerelease: false   
+    - name: download artifacts
+      uses: actions/download-artifact@v1
+      with:
+        name: uploads     
+    - name: upload mac arm
+      id: upload-mac-arm
+      uses: actions/upload-release-asset@v1.0.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./uploads/sioyek-release-mac-arm.zip
+        asset_name: sioyek-release-mac-arm.zip
+        asset_content_type: application/zip
